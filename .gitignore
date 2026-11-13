@@ -1,0 +1,21 @@
+# secrets
+.env
+deploy/.env
+*.pem
+*.key
+
+# real calibration data (contains real email addresses)
+calibration/ground-truth.csv
+calibration/recent.json
+
+# build output and dependencies
+node_modules/
+extension/dist/
+backend/target/
+
+# IDE and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

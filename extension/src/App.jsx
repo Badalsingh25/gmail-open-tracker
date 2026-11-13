@@ -1,0 +1,244 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const PAGE_SIZE = 10;
+const DEFAULTS = { apiBaseUrl: 'http://localhost:8080', apiKey: 'dev-only-change-me' };
+
+async function loadSettings() {
+  const stored = await chrome.storage.local.get('settings');
+  return { ...DEFAULTS, ...(stored.settings || {}) };
+}
+
+async function api(path, options = {}) {
+  const settings = await loadSettings();
+  const response = await fetch(`${settings.apiBaseUrl.replace(/\/+$/, '')}${path}`, {
+    ...options,
+    headers: { 'X-Tracker-Key': settings.apiKey, ...(options.headers || {}) }
+  });
+  if (response.status === 204) return null;
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.message || (response.status === 401
+      ? 'API key rejected. Check Settings.'
+      : `Backend request failed (${response.status}).`));
+  }
+  return body;
+}
+
+const STATUS = {
+  ENGAGED: { label: 'Clicked a link', tone: 'engaged' },
+  OPENED: { label: 'Likely opened', tone: 'opened' },
+  POSSIBLY_OPENED: { label: 'Possibly opened', tone: 'possible' },
+  AUTOMATED_ONLY: { label: 'Automated requests only', tone: 'automated' },
+  NO_ACTIVITY: { label: 'Waiting', tone: 'none' }
+};
+
+const UA_LABELS = {
+  GMAIL_PROXY: 'Gmail image proxy', YAHOO_PROXY: 'Yahoo image proxy', OUTLOOK_CLIENT: 'Outlook',
+  SCANNER: 'Scanner / bot', OTHER: 'Other client', NONE: 'No user-agent'
+};
+
+function formatDate(value, empty = '—') {
+  if (!value) return empty;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function formatAfter(seconds) {
+  if (seconds < 60) return `${seconds}s after send`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m after send`;
+  if (seconds < 172800) return `${Math.round(seconds / 3600)}h after send`;
+  return `${Math.round(seconds / 86400)}d after send`;
+}
+
+function Icon({ name, size = 18 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
+  const paths = {
+    mail: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></>,
+    refresh: <><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.5 9A7 7 0 0 1 18 6l2 6M4 12l2 6a7 7 0 0 0 12.5-3"/></>,
+    search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></>,
+    activity: <><path d="M3 12h4l3-8 4 16 3-8h4"/></>,
+    clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+    trash: <><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/></>,
+    chevronLeft: <path d="m15 18-6-6 6-6"/>,
+    chevronRight: <path d="m9 18 6-6-6-6"/>,
+    alert: <><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v4m0 3h.01"/></>,
+    inbox: <><path d="M4 4h16l2 11v5H2v-5L4 4Z"/><path d="M2 15h6l2 3h4l2-3h6"/></>,
+    chevronDown: <path d="m6 9 6 6 6-6"/>,
+    cog: <><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M19 5l-2 2M7 17l-2 2"/></>
+  };
+  return <svg {...common}>{paths[name] || null}</svg>;
+}
+
+function Stat({ label, value, icon, tone = '' }) {
+  return <div className={`stat ${tone}`}>
+    <div className="stat-top"><span>{label}</span><span className="stat-icon"><Icon name={icon}/></span></div>
+    <strong>{value ?? '—'}</strong>
+  </div>;
+}
+
+function RecipientRow({ recipient, sharedCopy }) {
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const status = STATUS[recipient.status] || STATUS.NO_ACTIVITY;
+
+  async function toggle() {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    setLoading(true);
+    setError('');
+    try { setEvents(await api(`/api/recipients/${recipient.id}/events`) || []); }
+    catch (err) { setError(err.message || 'Could not load events.'); }
+    finally { setLoading(false); }
+  }
+
+  return <div className="recipient-row">
+    <div className="status-line">
+      <span className="recipient-address" title={recipient.address}>{recipient.address}</span>
+      <span className={`status-pill tone-${status.tone}`}><span className="status-indicator"/>{status.label}</span>
+    </div>
+    <div className="recipient-meta">
+      <span>Confidence <strong>{recipient.score}</strong>/100</span>
+      <span>{recipient.pixelEvents} image · {recipient.clickEvents} click requests</span>
+      {recipient.firstOpenAt && <span>First: {formatDate(recipient.firstOpenAt)}</span>}
+      {recipient.lastOpenAt && recipient.lastOpenAt !== recipient.firstOpenAt && <span>Latest: {formatDate(recipient.lastOpenAt)}</span>}
+    </div>
+    {recipient.notMeasurable && <p className="history-caveat">Apple Mail Privacy Protection hides this person's real opens, so they can't be measured by an image.</p>}
+    {sharedCopy && <p className="history-caveat">Several people share this copy, so an open can't be attributed to one of them.</p>}
+    {(recipient.pixelEvents + recipient.clickEvents) > 0 && <button className="button button-ghost" onClick={toggle} aria-expanded={open}>
+      <Icon name="clock" size={14}/>{open ? 'Hide evidence' : 'Why this verdict?'}<Icon name="chevronDown" size={12}/>
+    </button>}
+    {open && <div className="history-panel">
+      {recipient.evidence?.length > 0 && <ul className="evidence">{recipient.evidence.map((line, i) => <li key={i}>{line}</li>)}</ul>}
+      <div className="history-title">Requests <span>{events.length}</span></div>
+      {loading && <div className="inline-state">Loading…</div>}
+      {error && <div className="inline-error">{error}</div>}
+      {!loading && !error && events.map(event => <div className="event-row" key={event.id}>
+        <span className="event-marker"><Icon name={event.counted ? 'mail' : 'activity'} size={13}/></span>
+        <div>
+          <strong>{event.kind === 'CLICK' ? 'Link click' : 'Image fetch'} · {event.counted ? 'counted' : 'not counted'} ({event.score})</strong>
+          <p>{formatDate(event.at)} · {formatAfter(event.secondsAfterSend)}</p>
+          <small>{event.reason} — {UA_LABELS[event.uaClass] || event.uaClass}</small>
+        </div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+function MessageCard({ message, onDelete }) {
+  const [deleting, setDeleting] = useState(false);
+  const status = STATUS[message.status] || STATUS.NO_ACTIVITY;
+
+  async function remove() {
+    if (!window.confirm(`Delete "${message.subject || '(No subject)'}" and all of its tracking history? This cannot be undone.`)) return;
+    setDeleting(true);
+    try { await onDelete(message); } finally { setDeleting(false); }
+  }
+
+  return <article className="email-card">
+    <div className="email-card-heading">
+      <div className="mail-avatar"><Icon name="mail" size={19}/></div>
+      <div className="email-heading-copy">
+        <h3 title={message.subject || '(No subject)'}>{message.subject || '(No subject)'}</h3>
+        <p>{formatDate(message.createdAt)} · {message.recipients.length} tracked {message.recipients.length === 1 ? 'recipient' : 'recipients'}</p>
+      </div>
+      <span className={`status-dot tone-${status.tone}`} title={status.label}/>
+    </div>
+    {message.recipients.map(r => <RecipientRow key={r.id} recipient={r} sharedCopy={message.sharedCopy}/>)}
+    <div className="card-actions">
+      <span/>
+      <button className="button button-danger" onClick={remove} disabled={deleting}><Icon name="trash" size={14}/>{deleting ? 'Deleting…' : 'Delete'}</button>
+    </div>
+  </article>;
+}
+
+export default function App() {
+  const [stats, setStats] = useState(null);
+  const [result, setResult] = useState(null);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [notice, setNotice] = useState('');
+  const requestNumber = useRef(0);
+
+  const load = useCallback(async ({ quiet = false } = {}) => {
+    const requestId = ++requestNumber.current;
+    if (!quiet) setLoading(true); else setRefreshing(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ q: query.trim(), filter, page: String(page), size: String(PAGE_SIZE) });
+      const [nextStats, nextResult] = await Promise.all([api('/api/stats'), api(`/api/messages/search?${params}`)]);
+      if (requestId !== requestNumber.current) return;
+      setStats(nextStats);
+      setResult(nextResult);
+      setLastUpdated(new Date());
+    } catch (err) {
+      if (requestId !== requestNumber.current) return;
+      setError(err.message || 'Could not reach the tracker.');
+    } finally {
+      if (requestId === requestNumber.current) { setLoading(false); setRefreshing(false); }
+    }
+  }, [query, filter, page]);
+
+  useEffect(() => { const t = window.setTimeout(() => load(), 220); return () => window.clearTimeout(t); }, [load]);
+  useEffect(() => { const t = window.setInterval(() => load({ quiet: true }), 30000); return () => window.clearInterval(t); }, [load]);
+
+  async function deleteMessage(message) {
+    try {
+      await api(`/api/messages/${message.id}`, { method: 'DELETE' });
+      await load({ quiet: true });
+      setNotice('Tracking record and history deleted.');
+    } catch (err) { setError(`Could not delete: ${err.message}`); throw err; }
+  }
+
+  const messages = result?.content || [];
+  const totalPages = result?.totalPages || 0;
+  const totalElements = result?.totalElements || 0;
+  const filtered = query || filter !== 'all';
+
+  return <main className="app-shell">
+    <header className="app-header">
+      <div className="brand-mark"><Icon name="mail" size={23}/><span /></div>
+      <div className="brand-copy"><h1>Open Tracker</h1><p>Gmail · per-recipient estimates</p></div>
+      <button className="icon-button" onClick={() => chrome.runtime.openOptionsPage()} aria-label="Settings" title="Settings"><Icon name="cog" size={18}/></button>
+      <button className={`icon-button ${refreshing ? 'spinning' : ''}`} onClick={() => load({ quiet: true })} disabled={refreshing} aria-label="Refresh dashboard" title="Refresh dashboard"><Icon name="refresh" size={18}/></button>
+    </header>
+
+    <section className="stats-grid" aria-label="Tracking statistics">
+      <Stat label="Tracked emails" value={stats?.trackedMessages} icon="mail"/>
+      <Stat label="Likely opened" value={stats?.likelyOpened} icon="activity" tone="stat-green"/>
+      <Stat label="Recipients" value={stats?.trackedRecipients} icon="clock" tone="stat-blue"/>
+    </section>
+
+    <div className="privacy-note"><span className="privacy-icon"><Icon name="alert" size={16}/></span><p><strong>An estimate, not proof.</strong> Scanners, Apple prefetch and your own previews are filtered out; clicks count most. Blocked images stay invisible.</p></div>
+
+    {error && <div className="error-banner" role="alert"><Icon name="alert" size={17}/><div><strong>Couldn't connect to the tracker</strong><p>{error}</p></div><button onClick={() => load()} className="retry-button">Retry</button></div>}
+    {notice && <div className="success-banner" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
+
+    <section className="list-section">
+      <div className="list-heading"><div><h2>Tracked emails</h2><p>{totalElements} records · updates every 30 seconds</p></div></div>
+      <div className="toolbar">
+        <label className="search-box"><Icon name="search" size={17}/><input value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} placeholder="Search recipient or subject" aria-label="Search recipient or subject"/>{query && <button onClick={() => { setQuery(''); setPage(0); }} aria-label="Clear search">×</button>}</label>
+        <select value={filter} onChange={e => { setFilter(e.target.value); setPage(0); }} aria-label="Filter">
+          <option value="all">All emails</option><option value="opened">Likely opened</option><option value="activity">Any request</option><option value="none">No requests</option>
+        </select>
+      </div>
+
+      {loading && !result ? <div className="loading-state"><span className="spinner"/><strong>Loading your tracker</strong><p>Connecting to your tracker API…</p></div>
+        : messages.length ? <div className="email-list">{messages.map(m => <MessageCard message={m} onDelete={deleteMessage} key={m.id}/>)}</div>
+        : <div className="empty-state"><div className="empty-icon"><Icon name="inbox" size={25}/></div><h3>{filtered ? 'No matching emails' : 'Nothing tracked yet'}</h3><p>{filtered ? 'Try changing your search or filter.' : 'Compose an email in Gmail and tick Track opens.'}</p><button className="button button-primary" onClick={() => chrome.tabs.create({ url: 'https://mail.google.com/' })}>Open Gmail</button></div>}
+
+      {result && totalPages > 0 && <div className="pagination">
+        <span>Page <strong>{page + 1}</strong> of <strong>{totalPages}</strong></span>
+        <div><button className="button button-ghost" disabled={page <= 0 || loading} onClick={() => setPage(v => Math.max(0, v - 1))}><Icon name="chevronLeft" size={15}/>Previous</button><button className="button button-ghost" disabled={result.last || loading} onClick={() => setPage(v => v + 1)}>Next<Icon name="chevronRight" size={15}/></button></div>
+      </div>}
+    </section>
+
+    <footer className="app-footer"><span>Gmail Open Tracker <b>•</b> v0.5</span><span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Waiting for data'}</span></footer>
+  </main>;
+}

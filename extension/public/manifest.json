@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Gmail Open Tracker",
+  "version": "0.5.0",
+  "description": "Estimates when emails you explicitly mark were opened or clicked, per recipient, filtering out scanner and prefetch requests.",
+  "permissions": [
+    "storage",
+    "notifications",
+    "alarms",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://gmail.googleapis.com/*",
+    "http://localhost:8080/*"
+  ],
+  "action": {
+    "default_title": "Gmail Open Tracker",
+    "default_popup": "index.html",
+    "default_icon": {
+      "128": "icon.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "settings.js",
+        "lib.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "oauth2": {
+    "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.send"
+    ]
+  }
+}

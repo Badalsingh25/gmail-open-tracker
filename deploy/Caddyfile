@@ -1,0 +1,20 @@
+# Caddy obtains and renews HTTPS certificates automatically (ports 80 and 443 must be reachable).
+# It also sets X-Forwarded-For to the real client address, which the ingest service uses
+# (in memory only) to recognise Apple and Google addresses.
+
+{$TRACK_DOMAIN} {
+	encode zstd gzip
+	# Recipients' mail clients only ever need these paths.
+	@public path /t/* /l/* /api/health
+	handle @public {
+		reverse_proxy ingest:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}

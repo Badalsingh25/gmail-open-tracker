@@ -1,0 +1,8 @@
+# One row per test email. Send each to your own test account, do EXACTLY what 'expected' says, then fill this in.
+# tag = text in the subject line; make every test email's tag unique, e.g. CAL-gmailweb-S2
+tag,address,client,scenario,expected
+CAL-gmailweb-S1,you+gmailweb@gmail.com,gmail-web,S1 delivered never opened,NOT_OPENED
+CAL-gmailweb-S2,you+gmailweb@gmail.com,gmail-web,S2 opened right away,OPENED
+CAL-gmailweb-S3,you+gmailweb@gmail.com,gmail-web,S3 opened >1h later,OPENED
+CAL-gmailweb-S4,you+gmailweb@gmail.com,gmail-web,S4 opened with images blocked,OPENED
+CAL-gmailweb-S5,you+gmailweb@gmail.com,gmail-web,S5 opened and clicked link,CLICKED

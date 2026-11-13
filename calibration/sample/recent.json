@@ -1,0 +1,10 @@
+[
+ {"id":1,"subject":"hello CAL-gm-S1","recipients":[{"address":"test@gmail.com","status":"AUTOMATED_ONLY","score":5,"evidence":[]}]},
+ {"id":2,"subject":"hello CAL-gm-S2","recipients":[{"address":"test@gmail.com","status":"OPENED","score":84,"evidence":["Gmail image proxy fetch well after sending (84)"]}]},
+ {"id":3,"subject":"hello CAL-gm-S4","recipients":[{"address":"test@gmail.com","status":"NO_ACTIVITY","score":0,"evidence":[]}]},
+ {"id":4,"subject":"hello CAL-gm-S5","recipients":[{"address":"test@gmail.com","status":"ENGAGED","score":97,"evidence":["Link clicked (92)"]}]},
+ {"id":5,"subject":"hello CAL-ap-S1","recipients":[{"address":"test@icloud.com","status":"AUTOMATED_ONLY","score":8,"evidence":["Apple Mail Privacy Protection prefetch (8)"]}]},
+ {"id":6,"subject":"hello CAL-ap-S2","recipients":[{"address":"test@icloud.com","status":"AUTOMATED_ONLY","score":8,"evidence":["Apple Mail Privacy Protection prefetch (8)"]}]},
+ {"id":7,"subject":"hello CAL-ol-S2","recipients":[{"address":"test@outlook.com","status":"AUTOMATED_ONLY","score":3,"evidence":["Security scanner or bot user-agent (3)"]}]},
+ {"id":8,"subject":"hello CAL-ol-S1","recipients":[{"address":"test@outlook.com","status":"POSSIBLY_OPENED","score":58,"evidence":["Image fetch by an unrecognised client shortly after sending (58)"]}]}
+]

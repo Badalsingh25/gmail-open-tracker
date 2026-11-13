@@ -1,0 +1,81 @@
+# Production stack: MySQL + public ingest + private API + automatic HTTPS.
+# Usage (on the server):  cp .env.example .env  &&  edit .env  &&  docker compose -f docker-compose.prod.yml up -d --build
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-email_tracker}
+      MYSQL_USER: ${MYSQL_USER:-tracker}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    # No published ports: only the app containers can reach the database.
+
+  # Owns the schema (DDL_AUTO=update) and serves the authenticated dashboard API.
+  api:
+    build: ../backend
+    restart: unless-stopped
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment: &app-env
+      TRACKER_STRICT: "true"
+      TRACKER_PUBLIC_BASE_URL: https://${TRACK_DOMAIN:?set TRACK_DOMAIN in .env}
+      TRACKER_API_KEY: ${TRACKER_API_KEY:?set TRACKER_API_KEY in .env}
+      TRACKER_SIGNING_SECRETS: ${TRACKER_SIGNING_SECRETS:?set TRACKER_SIGNING_SECRETS in .env}
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-email_tracker}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: ${MYSQL_USER:-tracker}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      TRACKER_MODE: api
+      DDL_AUTO: update
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # Tiny, public, write-only. Starts after the API so the tables exist.
+  ingest:
+    build: ../backend
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      <<: *app-env
+      TRACKER_MODE: ingest
+      DDL_AUTO: none
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TRACK_DOMAIN: ${TRACK_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - ingest
+      - api
+
+volumes:
+  mysql_data:
+  caddy_data:
+  caddy_config:

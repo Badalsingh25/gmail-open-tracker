@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gmail Open Tracker settings</title>
+  <style>
+    body{font:14px/1.5 system-ui,sans-serif;color:#202436;background:#f7f8fc;margin:0;padding:32px}
+    main{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e7e9f2;border-radius:14px;padding:24px}
+    h1{font-size:18px;margin:0 0 4px} p.hint{color:#6b7185;margin:0 0 18px;font-size:13px}
+    label{display:block;font-weight:600;margin:16px 0 4px} small{display:block;color:#6b7185;font-weight:400;margin-top:3px}
+    input[type=text],input[type=password],select{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d9dce8;border-radius:8px;font:inherit}
+    .row{display:flex;gap:8px;margin-top:22px} button{font:inherit;font-weight:600;padding:8px 14px;border-radius:8px;border:1px solid #d9dce8;background:#fff;cursor:pointer}
+    button.primary{background:#6558d3;border-color:#6558d3;color:#fff} #status{margin-top:14px;white-space:pre-wrap;font-size:13px}
+    .ok{color:#18754d}.bad{color:#a52d36} .check{display:flex;align-items:center;gap:8px;font-weight:600}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Gmail Open Tracker</h1>
+  <p class="hint">Where your dashboard API runs, and how the extension should behave.</p>
+
+  <label for="api">Dashboard API URL
+    <small>The service started with TRACKER_MODE=api (or all). Use https for anything not on this computer.</small></label>
+  <input id="api" type="text" placeholder="https://api.example.com" autocomplete="off" />
+
+  <label for="key">API key <small>The value of TRACKER_API_KEY on the server.</small></label>
+  <input id="key" type="password" autocomplete="off" />
+
+  <label for="mode">Several recipients
+    <small>Separate copies need Google sign-in to be set up (README). Otherwise one shared copy is sent.</small></label>
+  <select id="mode">
+    <option value="ask">Ask me each time</option>
+    <option value="separate">Always send separate copies when possible</option>
+    <option value="shared">Always send one shared copy</option>
+  </select>
+
+  <label class="check"><input id="links" type="checkbox" /> Track link clicks
+    <small style="font-weight:400;margin:0">Rewrites links to go through your tracker. Strongest open signal, but changes the link address recipients see.</small></label>
+
+  <div class="row"><button id="save" class="primary">Save</button><button id="test">Test connection</button></div>
+  <div id="status" role="status"></div>
+</main>
+<script src="settings.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

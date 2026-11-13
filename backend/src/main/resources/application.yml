@@ -1,0 +1,44 @@
+server:
+  port: ${PORT:8081}
+  shutdown: graceful
+  error:
+    include-message: never
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3308/email_tracker?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USERNAME:tracker}
+    password: ${DB_PASSWORD:local-dev-password}
+  jpa:
+    hibernate:
+      ddl-auto: ${DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+tracker:
+  # all = ingest + api (development). ingest = public pixel/click only. api = authenticated dashboard only.
+  mode: ${TRACKER_MODE:all}
+  # Set TRACKER_STRICT=true in production: weak or default secrets then stop startup.
+  strict: ${TRACKER_STRICT:false}
+  # Public HTTPS address of the ingest service, embedded in every sent email. Must stay stable forever.
+  public-base-url: ${TRACKER_PUBLIC_BASE_URL:http://localhost:8081}
+  api-key: ${TRACKER_API_KEY:dev-only-change-me}
+  # Comma-separated. The first signs new tokens; all verify. Add a new secret in front to rotate.
+  signing-secrets: ${TRACKER_SIGNING_SECRETS:dev-only-signing-secret-change-me}
+  # X-Forwarded-For (Caddy/nginx), CF-Connecting-IP (behind Cloudflare) or remote (no proxy).
+  client-ip-header: ${TRACKER_CLIENT_IP_HEADER:X-Forwarded-For}
+  rate-limit:
+    burst: ${TRACKER_RATE_BURST:120}
+    per-second: ${TRACKER_RATE_PER_SECOND:20}
+  ip-lists:
+    enabled: ${TRACKER_IP_LISTS_ENABLED:true}
+  # Starting heuristics, to be tuned with calibration/ against real mail clients.
+  scoring:
+    early-seconds: 30
+    settle-seconds: 300
+    burst-millis: 2000
+    opened-threshold: 70
+    possible-threshold: 35
+    noise-floor: 15
+    repeat-gap-seconds: 3600
