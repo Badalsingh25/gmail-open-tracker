@@ -3,12 +3,15 @@ package dev.badalsingh.tracker.ingest;
 import dev.badalsingh.tracker.core.EventInput;
 import dev.badalsingh.tracker.core.Features;
 import dev.badalsingh.tracker.core.OpenScorer;
+import dev.badalsingh.tracker.core.OwnViewFilter;
 import dev.badalsingh.tracker.core.SignalExtractor;
 import dev.badalsingh.tracker.core.TokenSigner;
 import dev.badalsingh.tracker.core.Verdict;
+import dev.badalsingh.tracker.model.OwnView;
 import dev.badalsingh.tracker.model.TrackEvent;
 import dev.badalsingh.tracker.model.TrackedLink;
 import dev.badalsingh.tracker.model.TrackedRecipient;
+import dev.badalsingh.tracker.repo.OwnViewRepository;
 import dev.badalsingh.tracker.repo.TrackEventRepository;
 import dev.badalsingh.tracker.repo.TrackedLinkRepository;
 import dev.badalsingh.tracker.repo.TrackedRecipientRepository;
@@ -37,15 +40,18 @@ public class IngestService {
     private final TrackedRecipientRepository recipients;
     private final TrackedLinkRepository links;
     private final TrackEventRepository events;
+    private final OwnViewRepository ownViews;
 
     public IngestService(TokenSigner signer, SignalExtractor extractor, OpenScorer scorer,
-                         TrackedRecipientRepository recipients, TrackedLinkRepository links, TrackEventRepository events) {
+                         TrackedRecipientRepository recipients, TrackedLinkRepository links, TrackEventRepository events,
+                         OwnViewRepository ownViews) {
         this.signer = signer;
         this.extractor = extractor;
         this.scorer = scorer;
         this.recipients = recipients;
         this.links = links;
         this.events = events;
+        this.ownViews = ownViews;
     }
 
     /** Forged, malformed and unknown tokens all return empty; only the signature check avoids a DB hit. */
@@ -70,7 +76,8 @@ public class IngestService {
         // Refresh the filter snapshot from the full history so late evidence can lift earlier events.
         List<TrackEvent> history = new ArrayList<>(events.findTop300ByRecipientIdOrderByOccurredAtDesc(recipient.getId()));
         Collections.reverse(history);
-        Verdict verdict = scorer.evaluate(history.stream().map(TrackEvent::toInput).toList());
+        List<Instant> own = ownViews.findByRecipientId(recipient.getId()).stream().map(OwnView::getViewedAt).toList();
+        Verdict verdict = scorer.evaluate(OwnViewFilter.withoutOwn(history.stream().map(TrackEvent::toInput).toList(), own));
         recipients.updateSnapshot(recipient.getId(), verdict.score(), now);
     }
 }

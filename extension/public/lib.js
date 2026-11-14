@@ -12,6 +12,29 @@
     return href.length <= 2048;
   }
 
+  /**
+   * Gmail shows images through its own proxy and keeps the original address after a '#', e.g.
+   * https://ci3.googleusercontent.com/meips/...#https://track.example.com/t/<token>.gif
+   * Loading that in YOUR browser makes Google fetch the pixel, which would look like the recipient opened it.
+   */
+  // Matches the "#<original address>" part Gmail keeps on proxied images, and captures the token.
+  const PROXIED_PIXEL = /#https?:\/\/[^\s"'<>#]+\/t\/([A-Za-z0-9_-]{30,64})\.gif(?:[?#].*)?$/i;
+  function trackerTokenFromProxiedSrc(src) {
+    const m = typeof src === "string" ? PROXIED_PIXEL.exec(src) : null;
+    return m ? m[1] : null;
+  }
+  /** The Gmail account a tab is signed in to, read from its title ("Inbox (3) - me@gmail.com - Gmail"). */
+  function accountFromTitle(title) {
+    const m = typeof title === "string" ? /([A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/.exec(title) : null;
+    return m ? m[1].toLowerCase() : null;
+  }
+  /** The signed token inside a pixel address like https://host/t/<token>.gif */
+  function tokenFromPixelUrl(url) {
+    const m = typeof url === "string" ? /\/t\/([A-Za-z0-9_-]{30,64})\.gif(?:[?#].*)?$/.exec(url) : null;
+    return m ? m[1] : null;
+  }
+  function isProxiedTrackerPixel(src) { return trackerTokenFromProxiedSrc(src) !== null; }
+
   /** Unique, absolute, trackable link targets found in an element, in document order. */
   function collectLinks(container) {
     const seen = new Set();
@@ -114,7 +137,7 @@
     ].join("\r\n");
   }
 
-  const api = { PIXEL_ATTR, isTrackableUrl, collectLinks, applyTracking, renderCopy, buildMime, encodeHeader, base64Url, utf8 };
+  const api = { PIXEL_ATTR, isProxiedTrackerPixel, trackerTokenFromProxiedSrc, accountFromTitle, tokenFromPixelUrl, isTrackableUrl, collectLinks, applyTracking, renderCopy, buildMime, encodeHeader, base64Url, utf8 };
   root.GOT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

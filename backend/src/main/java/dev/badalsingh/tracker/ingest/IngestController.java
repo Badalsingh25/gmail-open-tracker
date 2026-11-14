@@ -108,9 +108,14 @@ public class IngestController {
      */
     private String clientIp(HttpServletRequest request) {
         if ("remote".equalsIgnoreCase(clientIpHeader)) return request.getRemoteAddr();
-        String value = request.getHeader(clientIpHeader);
+        // "X-Forwarded-For:first" takes the leftmost entry (Render and most CDNs put the real client first);
+        // plain "X-Forwarded-For" takes the last entry (the one our own Caddy/nginx appended).
+        boolean first = clientIpHeader.toLowerCase(java.util.Locale.ROOT).endsWith(":first");
+        String header = first ? clientIpHeader.substring(0, clientIpHeader.length() - ":first".length()) : clientIpHeader;
+        String value = request.getHeader(header);
         if (value == null || value.isBlank()) return request.getRemoteAddr();
-        int comma = value.lastIndexOf(',');
-        return (comma < 0 ? value : value.substring(comma + 1)).trim();
+        int comma = first ? value.indexOf(',') : value.lastIndexOf(',');
+        if (comma < 0) return value.trim();
+        return (first ? value.substring(0, comma) : value.substring(comma + 1)).trim();
     }
 }

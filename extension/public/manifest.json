@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Gmail Open Tracker",
   "version": "0.5.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArnkZtV6Ww0fIb8VbTPg0RtJh9NC8yKFSulsLsXjFeVpbVt7wqxuk+6Kqgj8zd4jbor0eMWQhgdnJHQHJ03tIup1D1+KWdPcBDef+0tKS2eSC0yuuIEqfGRO9mN/iObdLYbIGTgZ/6QNCOL3VNiRvMeADgNA9tfRvAvN8KbniiwKX1FltfYD0zbIC1ZFVKmmJGXpgQdjUBpJZUZjdwjToxpxtAOP8jCojxa0bZYCxx7YffuGRtAX/wO9zt9HU8P8Ee9NdHgGpJvfiTTlBqg2Nvlz2Ew8KcsDrYk2kOK0TgsJ3cHjVJsiJ/dIklZDGraQ1SD/BhUqEb5BzFo2k3TilkwIDAQAB",
   "description": "Estimates when emails you explicitly mark were opened or clicked, per recipient, filtering out scanner and prefetch requests.",
   "permissions": [
     "storage",
@@ -12,7 +13,8 @@
   "host_permissions": [
     "https://mail.google.com/*",
     "https://gmail.googleapis.com/*",
-    "http://localhost:8080/*"
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "action": {
     "default_title": "Gmail Open Tracker",
@@ -48,7 +50,7 @@
     "open_in_tab": true
   },
   "oauth2": {
-    "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+    "client_id": "269269140147-n8fba5uofu6oioqoicgvnnffqehv9n2d.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/gmail.send"
     ]

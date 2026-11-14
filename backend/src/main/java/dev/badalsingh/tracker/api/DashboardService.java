@@ -4,13 +4,16 @@ import dev.badalsingh.tracker.api.Dto.*;
 import dev.badalsingh.tracker.core.EventInput;
 import dev.badalsingh.tracker.core.EventScore;
 import dev.badalsingh.tracker.core.OpenScorer;
+import dev.badalsingh.tracker.core.OwnViewFilter;
 import dev.badalsingh.tracker.core.Status;
 import dev.badalsingh.tracker.core.TokenSigner;
 import dev.badalsingh.tracker.core.Verdict;
+import dev.badalsingh.tracker.model.OwnView;
 import dev.badalsingh.tracker.model.TrackEvent;
 import dev.badalsingh.tracker.model.TrackedLink;
 import dev.badalsingh.tracker.model.TrackedMessage;
 import dev.badalsingh.tracker.model.TrackedRecipient;
+import dev.badalsingh.tracker.repo.OwnViewRepository;
 import dev.badalsingh.tracker.repo.TrackEventRepository;
 import dev.badalsingh.tracker.repo.TrackedLinkRepository;
 import dev.badalsingh.tracker.repo.TrackedMessageRepository;
@@ -26,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -39,18 +43,20 @@ public class DashboardService {
     private final TrackedRecipientRepository recipients;
     private final TrackedLinkRepository links;
     private final TrackEventRepository events;
+    private final OwnViewRepository ownViews;
     private final TokenSigner signer;
     private final OpenScorer scorer;
     private final String baseUrl;
 
     public DashboardService(TrackedMessageRepository messages, TrackedRecipientRepository recipients,
                             TrackedLinkRepository links, TrackEventRepository events,
-                            TokenSigner signer, OpenScorer scorer,
+                            OwnViewRepository ownViews, TokenSigner signer, OpenScorer scorer,
                             @Value("${tracker.public-base-url}") String publicBaseUrl) {
         this.messages = messages;
         this.recipients = recipients;
         this.links = links;
         this.events = events;
+        this.ownViews = ownViews;
         this.signer = signer;
         this.scorer = scorer;
         this.baseUrl = publicBaseUrl.endsWith("/") ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1) : publicBaseUrl;
@@ -97,7 +103,13 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public List<EventView> eventHistory(Long recipientId) {
         if (!recipients.existsById(recipientId)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Recipient was not found");
+        List<Instant> own = ownViews.findByRecipientId(recipientId).stream().map(OwnView::getViewedAt).toList();
         return events.findTop300ByRecipientIdOrderByOccurredAtDesc(recipientId).stream().map(e -> {
+            if (OwnViewFilter.isOwn(e.getOccurredAt(), own)) {
+                return new EventView(e.getId(), e.getOccurredAt(), e.toFeatures().kind().name(), e.toFeatures().uaClass(),
+                        e.toFeatures().ipClass(), e.toFeatures().offsetSeconds(), 0, false,
+                        "Your own view of the sent email (reported by the extension)", e.getLinkId());
+            }
             EventScore s = scorer.scoreEvent(e.toFeatures());
             return new EventView(e.getId(), e.getOccurredAt(), e.toFeatures().kind().name(), e.toFeatures().uaClass(),
                     e.toFeatures().ipClass(), e.toFeatures().offsetSeconds(), s.score(),
@@ -105,10 +117,32 @@ public class DashboardService {
         }).toList();
     }
 
+    /**
+     * The extension saw the sender's own Gmail load this recipient's pixel. Remember it, then refresh the
+     * stored snapshot so counts and filters stop treating that fetch as the recipient's open.
+     */
+    @Transactional
+    public void recordOwnView(String token) {
+        Optional<TrackedRecipient> recipient = signer.verify(token == null ? "" : token.trim()).flatMap(recipients::findByPublicId);
+        if (recipient.isEmpty()) return;
+        Long id = recipient.get().getId();
+        Instant now = Instant.now();
+        // Gmail re-renders a message many times while it is open; keep one record per few seconds.
+        if (ownViews.existsByRecipientIdAndViewedAtAfter(id, now.minusSeconds(5))) return;
+        ownViews.save(new OwnView(id, now));
+
+        List<TrackEvent> history = events.findByRecipientIdInOrderByOccurredAtAsc(List.of(id));
+        if (history.isEmpty()) return;
+        List<Instant> own = ownViews.findByRecipientId(id).stream().map(OwnView::getViewedAt).toList();
+        Verdict verdict = scorer.evaluate(OwnViewFilter.withoutOwn(history.stream().map(TrackEvent::toInput).toList(), own));
+        recipients.updateSnapshot(id, verdict.score(), history.get(history.size() - 1).getOccurredAt());
+    }
+
     @Transactional
     public void delete(Long messageId) {
         if (!messages.existsById(messageId)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tracked message was not found");
         events.deleteByMessage(messageId);
+        ownViews.deleteByMessage(messageId);
         recipients.deleteByMessage(messageId);
         links.deleteByMessage(messageId);
         messages.deleteById(messageId);
@@ -143,10 +177,15 @@ public class DashboardService {
                 : events.findByRecipientIdInOrderByOccurredAtAsc(recipientIds).stream()
                 .collect(Collectors.groupingBy(TrackEvent::getRecipientId, Collectors.mapping(TrackEvent::toInput, Collectors.toList())));
 
+        Map<Long, List<Instant>> ownByRecipient = recipientIds.isEmpty() ? Map.of()
+                : ownViews.findByRecipientIdIn(recipientIds).stream()
+                .collect(Collectors.groupingBy(OwnView::getRecipientId, Collectors.mapping(OwnView::getViewedAt, Collectors.toList())));
+
         List<MessageSummary> out = new ArrayList<>();
         for (TrackedMessage m : page) {
             List<RecipientSummary> rs = byMessage.getOrDefault(m.getId(), List.of()).stream().map(r -> {
-                Verdict v = scorer.evaluate(eventsByRecipient.getOrDefault(r.getId(), List.of()));
+                Verdict v = scorer.evaluate(OwnViewFilter.withoutOwn(
+                        eventsByRecipient.getOrDefault(r.getId(), List.of()), ownByRecipient.get(r.getId())));
                 return new RecipientSummary(r.getId(), r.getAddress(), v.status(), v.score(), v.pixelEvents(), v.clickEvents(),
                         v.firstOpenAt(), v.lastOpenAt(), v.evidence(), v.notMeasurable());
             }).toList();

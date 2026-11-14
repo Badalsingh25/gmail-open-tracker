@@ -11,9 +11,12 @@
 
   function addToggle(compose) {
     if (!compose || installed.has(compose) || compose.querySelector(`.${CHECKBOX_CLASS}`)) return;
-    const toolbar = compose.querySelector('[role="toolbar"]') || compose.querySelector('[aria-label*="Formatting options"]')?.parentElement;
     const sendButton = compose.querySelector('[data-tooltip^="Send"], [aria-label^="Send"]');
-    if (!toolbar || !sendButton) return;
+    if (!sendButton) return;
+    // Prefer Gmail's toolbar; otherwise sit in the row that holds the Send button (works when the toolbar is collapsed).
+    const toolbar = compose.querySelector('[role="toolbar"]') || compose.querySelector('[aria-label*="Formatting options"]')?.parentElement
+      || sendButton.closest("td, tr, div[role=group]")?.parentElement || sendButton.parentElement?.parentElement;
+    if (!toolbar) return;
     installed.add(compose);
 
     const label = document.createElement("label");
@@ -25,12 +28,18 @@
     const text = document.createElement("span");
     text.textContent = "Track opens";
     label.append(checkbox, text);
-    toolbar.appendChild(label);
+    // Gmail hides the formatting toolbar until "Aa" is pressed, so a checkbox placed there is invisible.
+    // Put it right beside Send, which is always on screen.
+    const sendGroup = sendButton.parentElement;
+    if (sendGroup && sendGroup.parentElement) sendGroup.parentElement.insertBefore(label, sendGroup.nextSibling);
+    else toolbar.appendChild(label);
 
     let state = "IDLE"; // IDLE -> PREPARING -> READY_TO_SEND | DONE_SEPARATE. Errors return to IDLE for a safe retry.
 
     function readRecipients() {
-      const chips = [...compose.querySelectorAll("[email]")].map(n => n.getAttribute("email")?.trim()).filter(v => v && v.includes("@"));
+      // Gmail marks recipient chips with email="" or data-hovercard-id="" depending on the layout; read both.
+      const chips = [...compose.querySelectorAll("[email], [data-hovercard-id*='@']")]
+        .map(n => (n.getAttribute("email") || n.getAttribute("data-hovercard-id") || "").trim()).filter(v => v && v.includes("@"));
       const input = compose.querySelector('input[name="to"], input[peoplekit-id], [name="to"]');
       const typed = input?.value?.split(/[;,]/).map(v => v.trim()) || [];
       const seen = new Map();
@@ -89,6 +98,7 @@
         const registration = await ask({ type: "REGISTER", payload: { subject, clientRequestId, mode, recipients, links } });
         if (!registration?.ok) throw new Error(registration?.error || "Could not create the tracking record. Confirm the backend is running.");
         const refs = registration.data.recipients;
+        rememberSenderTokens(refs);
 
         if (separate) {
           await sendSeparately(body, subject, refs);
@@ -160,7 +170,56 @@
     }, true);
   }
 
-  const scan = () => document.querySelectorAll('[role="dialog"], .M9').forEach(addToggle);
+  // Don't let the SENDER's own reading of a tracked message (Sent folder, a bounce notice) count as the recipient's open.
+  // This must only act in the account that sent the email: the same browser may be signed in to the recipient's account,
+  // and opening the mail there is exactly the open we want to record.
+  const BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  let senderAccounts = {};            // token -> the Gmail account that sent it (kept in chrome.storage.local)
+  const currentAccount = () => GOT.accountFromTitle(document?.title);
+
+  function rememberSenderTokens(refs) {
+    const account = currentAccount();
+    if (!account) return; // unknown account: never block anything for these tokens
+    for (const r of refs) { const t = GOT.tokenFromPixelUrl(r.pixelUrl); if (t) senderAccounts[t] = account; }
+    const keys = Object.keys(senderAccounts);
+    if (keys.length > 500) for (const k of keys.slice(0, keys.length - 500)) delete senderAccounts[k];
+    try { chrome.storage.local.set({ senderAccounts }); } catch (_) { /* best effort */ }
+  }
+  try {
+    chrome.storage.local.get("senderAccounts").then((v) => { senderAccounts = v?.senderAccounts || {}; if (typeof document !== "undefined") guardOwnViews(document.documentElement); }, () => {});
+    chrome.storage.onChanged?.addListener((changes) => { if (changes.senderAccounts) senderAccounts = changes.senderAccounts.newValue || {}; });
+  } catch (_) { /* extension reloaded; the tab needs a refresh */ }
+
+  const reported = new Map(); // token -> time, so a re-rendering Gmail doesn't flood the server
+  function reportOwnView(token) {
+    const now = Date.now();
+    if (now - (reported.get(token) || 0) < 20000) return;
+    reported.set(token, now);
+    try { ask({ type: "OWN_VIEW", token }).catch(() => {}); } catch (_) { /* extension reloaded; nothing to report to */ }
+  }
+  function guardOwnViews(root) {
+    if (typeof document === "undefined") return; // page is being torn down
+    const me = currentAccount();
+    if (!me || !root || root.nodeType !== 1) return;
+    const imgs = root.tagName === "IMG" ? [root] : root.querySelectorAll("img");
+    for (const img of imgs) {
+      if (img.hasAttribute(GOT.PIXEL_ATTR) || img.closest('[contenteditable="true"]')) continue;
+      const token = GOT.trackerTokenFromProxiedSrc(img.getAttribute("src"));
+      if (!token || senderAccounts[token] !== me) continue; // not sent from this account: leave it alone so the open counts
+      img.setAttribute("src", BLANK);
+      reportOwnView(token); // backup: the server ignores fetches around this moment even if blocking came too late
+      console.info("[Gmail Open Tracker] your own view of a tracked email: blocked and reported so it is not counted as an open");
+    }
+  }
+  new MutationObserver((records) => {
+    for (const r of records) {
+      r.addedNodes.forEach(guardOwnViews);
+      if (r.type === "attributes" && r.target.tagName === "IMG") guardOwnViews(r.target);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
+  guardOwnViews(document.documentElement);
+
+  const scan = () => typeof document !== "undefined" && document.querySelectorAll('[role="dialog"], .M9').forEach(addToggle);
   new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
   scan();
 })();

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { groupVisits, formatGap } from './visits.js';
 
 const PAGE_SIZE = 10;
 const DEFAULTS = { apiBaseUrl: 'http://localhost:8080', apiKey: 'dev-only-change-me' };
@@ -76,12 +77,32 @@ function Stat({ label, value, icon, tone = '' }) {
   </div>;
 }
 
+function VisitTimeline({ events }) {
+  const visits = groupVisits(events);
+  return <section className="visits">
+    <div className="history-title">Opens <span>{visits.length}</span></div>
+    {visits.length === 0 && <p className="visits-empty">No counted opens yet. Requests below were treated as automated.</p>}
+    <ol className="visit-list">
+      {visits.map(v => <li key={v.number} className={v.clicks ? 'visit visit-click' : 'visit'}>
+        {v.gapSincePreviousSeconds !== null && <span className="visit-gap">{formatGap(v.gapSincePreviousSeconds)}</span>}
+        <span className="visit-dot"/>
+        <div className="visit-body">
+          <strong>{v.number === 1 ? 'First open' : `Open ${v.number}`}{v.clicks > 0 ? ' · clicked a link' : ''}</strong>
+          <p>{formatDate(v.start)}{v.number === 1 ? ` · ${formatAfter(v.secondsAfterSend)}` : ''}</p>
+          <small>{UA_LABELS[v.client] || v.client} · {v.requests} request{v.requests === 1 ? '' : 's'}</small>
+        </div>
+      </li>)}
+    </ol>
+  </section>;
+}
+
 function RecipientRow({ recipient, sharedCopy }) {
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const status = STATUS[recipient.status] || STATUS.NO_ACTIVITY;
+  const people = String(recipient.address || '').split(',').map(a => a.trim()).filter(Boolean);
 
   async function toggle() {
     if (open) { setOpen(false); return; }
@@ -95,9 +116,12 @@ function RecipientRow({ recipient, sharedCopy }) {
 
   return <div className="recipient-row">
     <div className="status-line">
-      <span className="recipient-address" title={recipient.address}>{recipient.address}</span>
-      <span className={`status-pill tone-${status.tone}`}><span className="status-indicator"/>{status.label}</span>
+      {sharedCopy
+        ? <span className="recipient-address" title={recipient.address}>Shared copy · {people.length} people</span>
+        : <span className="recipient-address" title={recipient.address}>{recipient.address}</span>}
+      <span className={`status-pill tone-${status.tone}`}><span className="status-indicator"/>{sharedCopy && status.tone === 'opened' ? 'Opened by someone' : status.label}</span>
     </div>
+    {sharedCopy && <ul className="shared-people">{people.map(a => <li key={a}>{a}<span>can't tell who</span></li>)}</ul>}
     <div className="recipient-meta">
       <span>Confidence <strong>{recipient.score}</strong>/100</span>
       <span>{recipient.pixelEvents} image · {recipient.clickEvents} click requests</span>
@@ -105,13 +129,14 @@ function RecipientRow({ recipient, sharedCopy }) {
       {recipient.lastOpenAt && recipient.lastOpenAt !== recipient.firstOpenAt && <span>Latest: {formatDate(recipient.lastOpenAt)}</span>}
     </div>
     {recipient.notMeasurable && <p className="history-caveat">Apple Mail Privacy Protection hides this person's real opens, so they can't be measured by an image.</p>}
-    {sharedCopy && <p className="history-caveat">Several people share this copy, so an open can't be attributed to one of them.</p>}
+    {sharedCopy && <p className="history-caveat">One copy went to everyone, so the tracker can tell that someone opened it but not who. To see who, send separate copies (needs no attachments).</p>}
     {(recipient.pixelEvents + recipient.clickEvents) > 0 && <button className="button button-ghost" onClick={toggle} aria-expanded={open}>
-      <Icon name="clock" size={14}/>{open ? 'Hide evidence' : 'Why this verdict?'}<Icon name="chevronDown" size={12}/>
+      <Icon name="clock" size={14}/>{open ? 'Hide history' : 'Open history'}<Icon name="chevronDown" size={12}/>
     </button>}
     {open && <div className="history-panel">
+      {!loading && !error && <VisitTimeline events={events}/>}
       {recipient.evidence?.length > 0 && <ul className="evidence">{recipient.evidence.map((line, i) => <li key={i}>{line}</li>)}</ul>}
-      <div className="history-title">Requests <span>{events.length}</span></div>
+      <details className="raw-requests"><summary>All requests <span>{events.length}</span></summary>
       {loading && <div className="inline-state">Loading…</div>}
       {error && <div className="inline-error">{error}</div>}
       {!loading && !error && events.map(event => <div className="event-row" key={event.id}>
@@ -122,6 +147,7 @@ function RecipientRow({ recipient, sharedCopy }) {
           <small>{event.reason} — {UA_LABELS[event.uaClass] || event.uaClass}</small>
         </div>
       </div>)}
+      </details>
     </div>}
   </div>;
 }

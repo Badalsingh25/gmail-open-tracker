@@ -61,6 +61,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!message.payload?.clientRequestId) throw new Error("Missing request ID. Please click Send again.");
       return { ok: true, data: await apiFetch("/api/messages", { method: "POST", body: JSON.stringify(message.payload) }) };
     },
+    OWN_VIEW: async () => {
+      await apiFetch("/api/own-views", { method: "POST", body: JSON.stringify({ token: message.token }) });
+      return { ok: true };
+    },
     GMAIL_STATUS: async () => ({ ok: true, configured: gmailConfigured() }),
     SEND_SEPARATE: async () => {
       if (!gmailConfigured()) throw new Error("Gmail sending is not set up");

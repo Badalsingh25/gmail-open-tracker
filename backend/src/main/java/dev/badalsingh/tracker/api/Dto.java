@@ -34,5 +34,7 @@ public final class Dto {
     public record EventView(Long id, Instant at, String kind, String uaClass, String ipClass, long secondsAfterSend,
                             int score, boolean counted, String reason, Long linkId) {}
 
+    public record OwnViewRequest(@NotBlank @Size(max = 128) String token) {}
+
     public record StatsResponse(long trackedMessages, long trackedRecipients, long likelyOpened, long totalEvents) {}
 }

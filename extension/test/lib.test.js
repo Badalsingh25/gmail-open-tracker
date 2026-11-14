@@ -87,3 +87,21 @@ test("base64Url is URL-safe and unpadded", () => {
   assert.doesNotMatch(out, /[+/=]/);
   assert.equal(Buffer.from(out.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("hex"), "fbfffefa");
 });
+
+test("trackerTokenFromProxiedSrc finds our token in Gmail-proxied pixels only", () => {
+  const tok = "A".repeat(22) + "b".repeat(16);
+  assert.equal(GOT.trackerTokenFromProxiedSrc(`https://ci3.googleusercontent.com/meips/ABC=s0-d-e1-ft#https://track.example.com/t/${tok}.gif`), tok);
+  assert.equal(GOT.trackerTokenFromProxiedSrc(`https://ci3.googleusercontent.com/proxy/xyz#https://abc.trycloudflare.com/t/${tok}.gif`), tok);
+  assert.equal(GOT.isProxiedTrackerPixel(`https://track.example.com/t/${tok}.gif`), false);   // not proxied: that's the recipient's copy of the URL
+  assert.equal(GOT.isProxiedTrackerPixel("https://ci3.googleusercontent.com/meips/ABC#https://cdn.example.com/logo.png"), false);
+  assert.equal(GOT.isProxiedTrackerPixel(null), false);
+});
+
+test("accountFromTitle and tokenFromPixelUrl", () => {
+  assert.equal(GOT.accountFromTitle("Sent Mail - BadalBoss47@gmail.com - Gmail"), "badalboss47@gmail.com");
+  assert.equal(GOT.accountFromTitle("Inbox (112) - me@school.edu.in - Gmail"), "me@school.edu.in");
+  assert.equal(GOT.accountFromTitle("Gmail"), null);
+  const tok = "A".repeat(22) + "b".repeat(16);
+  assert.equal(GOT.tokenFromPixelUrl(`https://track.example.com/t/${tok}.gif`), tok);
+  assert.equal(GOT.tokenFromPixelUrl("https://t.example/t/R0.gif"), null);
+});

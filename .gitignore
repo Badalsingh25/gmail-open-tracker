@@ -19,3 +19,9 @@ backend/target/
 *.iml
 .DS_Store
 Thumbs.db
+
+client_secret*.json
+*.pem
+.env
+.env.*
+!deploy/.env.example

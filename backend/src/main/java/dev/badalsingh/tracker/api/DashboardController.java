@@ -51,6 +51,13 @@ public class DashboardController {
         return ResponseEntity.noContent().build();
     }
 
+    /** The extension reports that the sender looked at their own copy, so nearby pixel fetches are not the recipient. */
+    @PostMapping("/api/own-views")
+    public ResponseEntity<Void> ownView(@Valid @RequestBody OwnViewRequest request) {
+        service.recordOwnView(request.token()); // unknown or forged tokens are ignored silently
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/api/stats")
     public StatsResponse stats() { return service.stats(); }
 }
