@@ -1,0 +1,7 @@
+# One hostname. Caddy gets and renews the HTTPS certificate automatically (ports 80 and 443 must be open)
+# and sets X-Forwarded-For to the real client address, which the tracker uses (in memory only) to recognise
+# Apple and Google addresses.
+{$TRACK_HOST} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

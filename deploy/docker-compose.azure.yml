@@ -1,0 +1,64 @@
+# Single-VM stack for a small server (2 GB RAM): MySQL + ONE app container (ingest + API together) + automatic HTTPS.
+# Usage (on the server):  cp .env.azure.example .env  &&  nano .env  &&  docker compose -f docker-compose.azure.yml up -d --build
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    # Small memory footprint for a small server.
+    command: ["--innodb-buffer-pool-size=128M", "--performance-schema=OFF", "--max-connections=60"]
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-email_tracker}
+      MYSQL_USER: ${MYSQL_USER:-tracker}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    # No published ports: only the app can reach the database.
+
+  app:
+    build: ../backend
+    restart: unless-stopped
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      TRACKER_MODE: all
+      TRACKER_STRICT: "true"
+      TRACKER_PUBLIC_BASE_URL: https://${TRACK_HOST:?set TRACK_HOST in .env}
+      TRACKER_API_KEY: ${TRACKER_API_KEY:?set TRACKER_API_KEY in .env}
+      TRACKER_SIGNING_SECRETS: ${TRACKER_SIGNING_SECRETS:?set TRACKER_SIGNING_SECRETS in .env}
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-email_tracker}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: ${MYSQL_USER:-tracker}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DDL_AUTO: update
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss512k -Duser.timezone=UTC"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TRACK_HOST: ${TRACK_HOST}
+    volumes:
+      - ./Caddyfile.azure:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  mysql_data:
+  caddy_data:
+  caddy_config:

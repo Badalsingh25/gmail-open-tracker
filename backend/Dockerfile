@@ -15,5 +15,7 @@ USER app
 WORKDIR /app
 COPY --from=build /app.jar /app/app.jar
 EXPOSE 8080
+# application.yml reads PORT; pin it so the compose health check and Caddy (port 8080) always match.
+ENV PORT=8080
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=70 -Duser.timezone=UTC"
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
