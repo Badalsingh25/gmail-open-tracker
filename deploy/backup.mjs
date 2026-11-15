@@ -38,6 +38,11 @@ async function get(pathname, attempt = 1) {
 
 try {
   const stats = await get("/api/stats");
+  console.log(`Tracker reports: ${stats.trackedMessages} mails, ${stats.trackedRecipients} recipients, ${stats.totalEvents} events.`);
+  if (!stats.trackedMessages) {
+    console.log("Nothing to export: the tracker itself reports no tracked mails. Check that this is the right service and database.");
+    process.exit(0);
+  }
   const messages = [];
   for (let page = 0; page < 200; page++) {
     const chunk = await get(`/api/messages/search?q=&filter=all&page=${page}&size=50`);
@@ -52,6 +57,8 @@ try {
     }
   }
 
+  if (!messages.length) throw new Error(`The tracker counts ${stats.trackedMessages} mails but the listing returned none. Nothing was saved.`);
+
   fs.mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
   const file = path.join(dir, `tracker-${stamp}.json`);
@@ -64,7 +71,7 @@ try {
   console.log(`Saved ${messages.length} mails, ${recipients} recipients, ${events} events to ${file}`);
   if (old.length) console.log(`Removed ${old.length} older archive(s); keeping the latest ${keep}.`);
   // TiDB Starter's free allowance is 5 GiB of storage; each event is a few hundred bytes.
-  console.log(`Rough size: about ${(stats.events * 300 / 1048576).toFixed(2)} MB of events in the database (free allowance: 5 GiB).`);
+  console.log(`Rough size: about ${((Number(stats.totalEvents) || 0) * 300 / 1048576).toFixed(2)} MB of events in the database (free allowance: 5 GiB).`);
 } catch (e) {
   console.error("Backup failed: " + (e.message || e));
   process.exit(1);
