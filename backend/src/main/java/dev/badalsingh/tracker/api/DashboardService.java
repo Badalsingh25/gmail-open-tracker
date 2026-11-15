@@ -4,6 +4,7 @@ import dev.badalsingh.tracker.api.Dto.*;
 import dev.badalsingh.tracker.core.EventInput;
 import dev.badalsingh.tracker.core.EventScore;
 import dev.badalsingh.tracker.core.OpenScorer;
+import dev.badalsingh.tracker.core.Features;
 import dev.badalsingh.tracker.core.OwnViewFilter;
 import dev.badalsingh.tracker.core.Status;
 import dev.badalsingh.tracker.core.TokenSigner;
@@ -111,9 +112,15 @@ public class DashboardService {
                         "Your own view of the sent email (reported by the extension)", e.getLinkId());
             }
             EventScore s = scorer.scoreEvent(e.toFeatures());
+            int score = s.score();
+            String reason = s.reason();
+            if (OwnViewFilter.isNear(e.getOccurredAt(), own) && e.toFeatures().kind() == Features.Kind.PIXEL) {
+                score = Math.min(score, scorer.config().openedThreshold() - 1);
+                reason = reason + " · " + OwnViewFilter.NEAR_NOTE;
+            }
             return new EventView(e.getId(), e.getOccurredAt(), e.toFeatures().kind().name(), e.toFeatures().uaClass(),
-                    e.toFeatures().ipClass(), e.toFeatures().offsetSeconds(), s.score(),
-                    s.score() >= scorer.config().possibleThreshold(), s.reason(), e.getLinkId());
+                    e.toFeatures().ipClass(), e.toFeatures().offsetSeconds(), score,
+                    score >= scorer.config().possibleThreshold(), reason, e.getLinkId());
         }).toList();
     }
 
@@ -134,7 +141,7 @@ public class DashboardService {
         List<TrackEvent> history = events.findByRecipientIdInOrderByOccurredAtAsc(List.of(id));
         if (history.isEmpty()) return;
         List<Instant> own = ownViews.findByRecipientId(id).stream().map(OwnView::getViewedAt).toList();
-        Verdict verdict = scorer.evaluate(OwnViewFilter.withoutOwn(history.stream().map(TrackEvent::toInput).toList(), own));
+        Verdict verdict = OwnViewFilter.evaluate(scorer, history.stream().map(TrackEvent::toInput).toList(), own);
         recipients.updateSnapshot(id, verdict.score(), history.get(history.size() - 1).getOccurredAt());
     }
 
@@ -184,8 +191,8 @@ public class DashboardService {
         List<MessageSummary> out = new ArrayList<>();
         for (TrackedMessage m : page) {
             List<RecipientSummary> rs = byMessage.getOrDefault(m.getId(), List.of()).stream().map(r -> {
-                Verdict v = scorer.evaluate(OwnViewFilter.withoutOwn(
-                        eventsByRecipient.getOrDefault(r.getId(), List.of()), ownByRecipient.get(r.getId())));
+                Verdict v = OwnViewFilter.evaluate(scorer,
+                        eventsByRecipient.getOrDefault(r.getId(), List.of()), ownByRecipient.get(r.getId()));
                 return new RecipientSummary(r.getId(), r.getAddress(), v.status(), v.score(), v.pixelEvents(), v.clickEvents(),
                         v.firstOpenAt(), v.lastOpenAt(), v.evidence(), v.notMeasurable());
             }).toList();

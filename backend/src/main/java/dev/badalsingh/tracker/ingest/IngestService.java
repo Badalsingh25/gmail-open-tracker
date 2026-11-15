@@ -77,7 +77,7 @@ public class IngestService {
         List<TrackEvent> history = new ArrayList<>(events.findTop300ByRecipientIdOrderByOccurredAtDesc(recipient.getId()));
         Collections.reverse(history);
         List<Instant> own = ownViews.findByRecipientId(recipient.getId()).stream().map(OwnView::getViewedAt).toList();
-        Verdict verdict = scorer.evaluate(OwnViewFilter.withoutOwn(history.stream().map(TrackEvent::toInput).toList(), own));
+        Verdict verdict = OwnViewFilter.evaluate(scorer, history.stream().map(TrackEvent::toInput).toList(), own);
         recipients.updateSnapshot(recipient.getId(), verdict.score(), now);
     }
 }
