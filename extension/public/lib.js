@@ -117,17 +117,33 @@
     return "got_" + Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
   }
 
-  /** Build an RFC 5322 multipart/alternative message addressed to exactly one recipient. */
-  function buildMime({ to, subject, html, text }) {
+  function safeFileName(name) {
+    const clean = String(name || "attachment").replace(/[\r\n\\/:*?"<>|]+/g, "_").trim();
+    return clean || "attachment";
+  }
+
+  /** attachments: [{ name, mime, data }] where data is standard base64 of the file's bytes. */
+  function attachmentPart(att) {
+    const name = safeFileName(att.name);
+    const mime = /^[\w.+-]+\/[\w.+-]+$/.test(att.mime || "") ? att.mime : "application/octet-stream";
+    const ascii = /^[\x20-\x7e]*$/.test(name) ? name : "attachment";
+    const utf8Name = encodeURIComponent(name).replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+    return [
+      `Content-Type: ${mime}; name="${ascii}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${ascii}"; filename*=UTF-8''${utf8Name}`,
+      "",
+      wrap76(String(att.data || "").replace(/\s+/g, "")),
+      ""
+    ].join("\r\n");
+  }
+
+  /** Build an RFC 5322 message addressed to exactly one recipient (multipart/alternative, plus attachments if any). */
+  function buildMime({ to, subject, html, text, attachments }) {
     if (!ADDRESS.test(to)) throw new Error("Invalid recipient address: " + to);
     const b = boundary();
     const part = (type, body) => `Content-Type: ${type}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrap76(toBase64(utf8(body)))}\r\n`;
-    return [
-      "MIME-Version: 1.0",
-      "To: " + to,
-      "Subject: " + encodeHeader(subject || ""),
-      `Content-Type: multipart/alternative; boundary="${b}"`,
-      "",
+    const alternative = [
       `--${b}`,
       part("text/plain", text || ""),
       `--${b}`,
@@ -135,9 +151,40 @@
       `--${b}--`,
       ""
     ].join("\r\n");
+    const files = Array.isArray(attachments) ? attachments : [];
+    if (!files.length) {
+      return ["MIME-Version: 1.0", "To: " + to, "Subject: " + encodeHeader(subject || ""),
+        `Content-Type: multipart/alternative; boundary="${b}"`, "", alternative].join("\r\n");
+    }
+    const outer = "got_mixed_" + b.slice(4);
+    return [
+      "MIME-Version: 1.0",
+      "To: " + to,
+      "Subject: " + encodeHeader(subject || ""),
+      `Content-Type: multipart/mixed; boundary="${outer}"`,
+      "",
+      `--${outer}`,
+      `Content-Type: multipart/alternative; boundary="${b}"`,
+      "",
+      alternative,
+      ...files.flatMap(f => [`--${outer}`, attachmentPart(f)]),
+      `--${outer}--`,
+      ""
+    ].join("\r\n");
   }
 
-  const api = { PIXEL_ATTR, isProxiedTrackerPixel, trackerTokenFromProxiedSrc, accountFromTitle, tokenFromPixelUrl, isTrackableUrl, collectLinks, applyTracking, renderCopy, buildMime, encodeHeader, base64Url, utf8 };
+  /** Gmail marks a compose attachment with download_url="mime:filename:url". Returns null when any can't be read. */
+  function parseAttachmentUrls(values) {
+    const out = [];
+    for (const v of values) {
+      const m = /^([^:]+):(.*?):(https:\/\/mail\.google\.com\/.+)$/.exec(String(v || ""));
+      if (!m) return null;
+      out.push({ mime: m[1], name: m[2], url: m[3] });
+    }
+    return out;
+  }
+
+  const api = { PIXEL_ATTR, isProxiedTrackerPixel, trackerTokenFromProxiedSrc, accountFromTitle, tokenFromPixelUrl, isTrackableUrl, collectLinks, applyTracking, renderCopy, buildMime, parseAttachmentUrls, toBase64, encodeHeader, base64Url, utf8 };
   root.GOT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

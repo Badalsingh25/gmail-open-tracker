@@ -1,7 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { groupVisits, formatGap } from './visits.js';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 25;
+const SORTS = {
+  newest: 'Newest sent',
+  oldest: 'Oldest sent',
+  opened: 'Recently opened',
+  confidence: 'Highest confidence'
+};
+
+function lastOpened(message) {
+  const times = message.recipients.map(r => r.lastOpenAt).filter(Boolean).map(t => new Date(t).getTime());
+  return times.length ? Math.max(...times) : 0;
+}
+
+function sortMessages(list, sort) {
+  const copy = [...list];
+  const created = m => new Date(m.createdAt).getTime();
+  if (sort === 'oldest') copy.sort((a, b) => created(a) - created(b));
+  else if (sort === 'opened') copy.sort((a, b) => lastOpened(b) - lastOpened(a) || created(b) - created(a));
+  else if (sort === 'confidence') copy.sort((a, b) => b.score - a.score || created(b) - created(a));
+  else copy.sort((a, b) => created(b) - created(a));
+  return copy;
+}
+
+function csvCell(value) {
+  const text = value == null ? '' : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
 const DEFAULTS = { apiBaseUrl: 'http://localhost:8080', apiKey: 'dev-only-change-me' };
 
 async function loadSettings() {
@@ -128,6 +154,7 @@ function RecipientRow({ recipient, sharedCopy }) {
       {recipient.firstOpenAt && <span>First: {formatDate(recipient.firstOpenAt)}</span>}
       {recipient.lastOpenAt && recipient.lastOpenAt !== recipient.firstOpenAt && <span>Latest: {formatDate(recipient.lastOpenAt)}</span>}
     </div>
+    {recipient.evidence?.[0]?.startsWith('Arrived near your own view') && <p className="history-caveat">A request arrived close to when you viewed your own copy, so it is shown as possible, not certain. A later open will confirm it.</p>}
     {recipient.notMeasurable && <p className="history-caveat">Apple Mail Privacy Protection hides this person's real opens, so they can't be measured by an image.</p>}
     {sharedCopy && <p className="history-caveat">One copy went to everyone, so the tracker can tell that someone opened it but not who. To see who, send separate copies (needs no attachments).</p>}
     {(recipient.pixelEvents + recipient.clickEvents) > 0 && <button className="button button-ghost" onClick={toggle} aria-expanded={open}>
@@ -168,6 +195,7 @@ function MessageCard({ message, onDelete }) {
       <div className="email-heading-copy">
         <h3 title={message.subject || '(No subject)'}>{message.subject || '(No subject)'}</h3>
         <p>{formatDate(message.createdAt)} · {message.recipients.length} tracked {message.recipients.length === 1 ? 'recipient' : 'recipients'}</p>
+        {lastOpened(message) > 0 && <p className="last-opened">Last opened {formatDate(new Date(lastOpened(message)).toISOString())}</p>}
       </div>
       <span className={`status-dot tone-${status.tone}`} title={status.label}/>
     </div>
@@ -184,6 +212,8 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState('newest');
+  const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -214,6 +244,40 @@ export default function App() {
   useEffect(() => { const t = window.setTimeout(() => load(), 220); return () => window.clearTimeout(t); }, [load]);
   useEffect(() => { const t = window.setInterval(() => load({ quiet: true }), 30000); return () => window.clearInterval(t); }, [load]);
 
+  useEffect(() => {
+    try { chrome.storage.local.set({ unseenOpens: 0 }); chrome.action?.setBadgeText({ text: '' }); } catch (_) { /* not critical */ }
+  }, []);
+
+  async function exportCsv() {
+    setExporting(true);
+    setError('');
+    try {
+      const rows = [['Subject', 'Sent', 'Recipient', 'Status', 'Confidence', 'Image requests', 'Click requests', 'First open', 'Last open']];
+      for (let p = 0; p < 40; p++) {
+        const params = new URLSearchParams({ q: query.trim(), filter, page: String(p), size: '50' });
+        const chunk = await api(`/api/messages/search?${params}`);
+        for (const m of chunk.content || []) {
+          for (const r of m.recipients) {
+            rows.push([m.subject || '(No subject)', m.createdAt, r.address, (STATUS[r.status] || STATUS.NO_ACTIVITY).label,
+              r.score, r.pixelEvents, r.clickEvents, r.firstOpenAt || '', r.lastOpenAt || '']);
+          }
+        }
+        if (chunk.last || !chunk.content?.length) break;
+      }
+      const blob = new Blob(['\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `email-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setNotice(`Exported ${rows.length - 1} rows.`);
+    } catch (err) { setError(`Could not export: ${err.message}`); }
+    finally { setExporting(false); }
+  }
+
   async function deleteMessage(message) {
     try {
       await api(`/api/messages/${message.id}`, { method: 'DELETE' });
@@ -222,7 +286,7 @@ export default function App() {
     } catch (err) { setError(`Could not delete: ${err.message}`); throw err; }
   }
 
-  const messages = result?.content || [];
+  const messages = sortMessages(result?.content || [], sort);
   const totalPages = result?.totalPages || 0;
   const totalElements = result?.totalElements || 0;
   const filtered = query || filter !== 'all';
@@ -241,17 +305,19 @@ export default function App() {
       <Stat label="Recipients" value={stats?.trackedRecipients} icon="clock" tone="stat-blue"/>
     </section>
 
-    <div className="privacy-note"><span className="privacy-icon"><Icon name="alert" size={16}/></span><p><strong>An estimate, not proof.</strong> Scanners, Apple prefetch and your own previews are filtered out; clicks count most. Blocked images stay invisible.</p></div>
 
     {error && <div className="error-banner" role="alert"><Icon name="alert" size={17}/><div><strong>Couldn't connect to the tracker</strong><p>{error}</p></div><button onClick={() => load()} className="retry-button">Retry</button></div>}
     {notice && <div className="success-banner" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
 
     <section className="list-section">
-      <div className="list-heading"><div><h2>Tracked emails</h2><p>{totalElements} records · updates every 30 seconds</p></div></div>
+      <div className="list-heading"><div><h2>Tracked emails</h2><p>{totalElements} records · updates every 30 seconds</p></div><button className="button button-ghost" onClick={exportCsv} disabled={exporting || !totalElements} title="Download all matching emails as a CSV file">{exporting ? 'Exporting…' : 'Export CSV'}</button></div>
       <div className="toolbar">
         <label className="search-box"><Icon name="search" size={17}/><input value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} placeholder="Search recipient or subject" aria-label="Search recipient or subject"/>{query && <button onClick={() => { setQuery(''); setPage(0); }} aria-label="Clear search">×</button>}</label>
         <select value={filter} onChange={e => { setFilter(e.target.value); setPage(0); }} aria-label="Filter">
           <option value="all">All emails</option><option value="opened">Likely opened</option><option value="activity">Any request</option><option value="none">No requests</option>
+        </select>
+        <select value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort" title="Sort the emails on this page">
+          {Object.entries(SORTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </div>
 
@@ -265,6 +331,6 @@ export default function App() {
       </div>}
     </section>
 
-    <footer className="app-footer"><span>Gmail Open Tracker <b>•</b> v0.5</span><span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Waiting for data'}</span></footer>
+    <footer className="app-footer"><span>Gmail Open Tracker <b>•</b> v0.7</span><span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Waiting for data'}</span></footer>
   </main>;
 }

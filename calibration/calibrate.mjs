@@ -3,6 +3,9 @@
 //
 //   node calibrate.mjs --truth ground-truth.csv --api https://api.example.com --key YOUR_API_KEY
 //   node calibrate.mjs --truth ground-truth.csv --input recent.json        (offline, from a saved /api/messages/recent)
+//   node calibrate.mjs --make-template --api ... --key ... [--out ground-truth.csv]
+//        writes one ground-truth row for every tracked mail whose subject contains a tag like CAL-gmailweb-S2,
+//        filling in the expected result from the scenario number. Check the rows against what you really did.
 //
 // Ground truth CSV columns: tag,address,client,scenario,expected
 //   tag       text that appears in the test email's subject (e.g. CAL-gmail-web-S2)
@@ -43,6 +46,23 @@ async function loadMessages() {
 }
 
 const pct = (n, d) => (d === 0 ? "n/a" : (100 * n / d).toFixed(1) + "%");
+
+const EXPECTED_BY_SCENARIO = { S1: "NOT_OPENED", S2: "OPENED", S3: "OPENED", S4: "OPENED", S5: "CLICKED", S6: "OPENED" };
+
+if (args["make-template"]) {
+  const found = await loadMessages();
+  const lines = ["tag,address,client,scenario,expected"];
+  for (const m of found) {
+    const tag = /CAL-([A-Za-z0-9]+)-(S\d)/.exec(m.subject || "");
+    if (!tag) continue;
+    const expected = EXPECTED_BY_SCENARIO[tag[2]] || "";
+    for (const r of m.recipients) lines.push([tag[0], r.address.split(",")[0].trim(), tag[1], tag[2], expected].join(","));
+  }
+  const text = lines.join("\n") + "\n";
+  if (args.out && args.out !== "true") { fs.writeFileSync(args.out, text); console.log(`Wrote ${lines.length - 1} rows to ${args.out}. Review them: 'expected' is only what the scenario number implies.`); }
+  else process.stdout.write(text);
+  process.exit(0);
+}
 
 const truth = parseCsv(fs.readFileSync(args.truth || "ground-truth.csv", "utf8"));
 const messages = await loadMessages();
@@ -86,6 +106,13 @@ for (const c of clients) {
   const rows = results.filter(r => r.client === c);
   const correct = rows.filter(r => isPositive(r.expected) ? isPositive(r.predicted) : r.predicted === "NOT_OPENED").length;
   console.log(`  ${c.padEnd(24)} ${String(correct).padStart(2)}/${rows.length}  ${pct(correct, rows.length)}`);
+}
+
+console.log("\nBy scenario (strict accuracy)");
+for (const sc of [...new Set(results.map(r => String(r.scenario).split(" ")[0]))].sort()) {
+  const rows = results.filter(r => String(r.scenario).split(" ")[0] === sc);
+  const correct = rows.filter(r => isPositive(r.expected) ? isPositive(r.predicted) : r.predicted === "NOT_OPENED").length;
+  console.log(`  ${sc.padEnd(6)} ${String(correct).padStart(2)}/${rows.length}  ${pct(correct, rows.length)}`);
 }
 
 const wrong = results.filter(r => isPositive(r.expected) ? !isPositive(r.predicted) : isPositive(r.predicted));

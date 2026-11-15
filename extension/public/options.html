@@ -37,6 +37,21 @@
 
   <label class="check"><input id="links" type="checkbox" /> Track link clicks
     <small style="font-weight:400;margin:0">Rewrites links to go through your tracker. Strongest open signal, but changes the link address recipients see.</small></label>
+  <label class="check"><input id="notify" type="checkbox" /> Desktop alerts
+    <small style="font-weight:400;margin:0">Shows a notification when a recipient likely opens your mail or clicks a link. Checked about once a minute while Chrome is open.</small></label>
+
+  <h2 style="font-size:15px;margin:26px 0 0">Email alerts (EmailJS)</h2>
+  <p class="hint" style="margin-top:4px">Get an email the first time a recipient opens your mail or clicks a link, in addition to the desktop alert. Free EmailJS plan: 200 emails a month.</p>
+  <label class="check"><input id="emailAlerts" type="checkbox" /> Send me an email alert</label>
+  <label for="alertEmail">Send alerts to <small>Leave blank to use the address set in the EmailJS template.</small></label>
+  <input id="alertEmail" type="text" placeholder="you@gmail.com" autocomplete="off" />
+  <label for="ejsService">EmailJS service ID</label>
+  <input id="ejsService" type="text" placeholder="service_xxxxxxx" autocomplete="off" />
+  <label for="ejsTemplate">EmailJS template ID</label>
+  <input id="ejsTemplate" type="text" placeholder="template_xxxxxxx" autocomplete="off" />
+  <label for="ejsKey">EmailJS public key <small>The public key from EmailJS, not the private key.</small></label>
+  <input id="ejsKey" type="text" autocomplete="off" />
+  <div class="row"><button id="testEmail">Send test email</button></div>
 
   <div class="row"><button id="save" class="primary">Save</button><button id="test">Test connection</button></div>
   <div id="status" role="status"></div>

@@ -2,6 +2,7 @@ importScripts("settings.js", "lib.js");
 
 const POLL_ALARM = "gmail-open-tracker-poll";
 const RANKS_KEY = "lastStatusRanks";
+const UNSEEN_KEY = "unseenOpens";
 const RANK = { NO_ACTIVITY: 0, AUTOMATED_ONLY: 1, POSSIBLY_OPENED: 2, OPENED: 3, ENGAGED: 4 };
 const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 
@@ -69,9 +70,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     SEND_SEPARATE: async () => {
       if (!gmailConfigured()) throw new Error("Gmail sending is not set up");
       const results = [];
+      const attachments = Array.isArray(message.attachments) ? message.attachments : [];
       for (const item of message.items || []) { // sequential: stay well inside Gmail's rate limits
         try {
-          const mime = GOT.buildMime(item);
+          const mime = GOT.buildMime({ ...item, attachments });
           await gmailSend(GOT.base64Url(GOT.utf8(mime)));
           results.push({ to: item.to, ok: true });
         } catch (error) {
@@ -89,13 +91,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ---------- Notifications: only when the evidence gets strong, never for scanner noise ----------
 
+async function setBadge(count) {
+  try {
+    await chrome.action.setBadgeText({ text: count > 0 ? String(Math.min(count, 99)) : "" });
+    if (count > 0) await chrome.action.setBadgeBackgroundColor({ color: "#16845b" });
+  } catch (_) { /* badge is a nicety */ }
+}
+
+function whenText(iso) {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (_) { return ""; }
+}
+
 async function checkForNewActivity() {
   try {
+    const settings = await GOT_SETTINGS.getSettings();
     const messages = await apiFetch("/api/messages/recent");
-    const stored = await chrome.storage.local.get(RANKS_KEY);
+    const stored = await chrome.storage.local.get([RANKS_KEY, UNSEEN_KEY]);
     const hasBaseline = Object.prototype.hasOwnProperty.call(stored, RANKS_KEY);
     const previous = stored[RANKS_KEY] || {};
     const next = {};
+    let unseen = Number(stored[UNSEEN_KEY]) || 0;
 
     for (const message of messages) {
       for (const recipient of message.recipients) {
@@ -104,22 +120,48 @@ async function checkForNewActivity() {
         next[id] = rank;
         const before = previous[id] ?? 0;
         const crossed = (before < RANK.OPENED && rank >= RANK.OPENED) || (before < RANK.ENGAGED && rank === RANK.ENGAGED);
-        if (hasBaseline && crossed && chrome.notifications?.create) {
+        if (!hasBaseline || !crossed) continue;
+        unseen += 1;
+        if (settings.emailAlerts !== false && settings.emailjsServiceId && settings.emailjsTemplateId && settings.emailjsPublicKey) {
+          const clicked = rank === RANK.ENGAGED;
+          const who = String(recipient.address || "").split(",")[0].trim() || "A recipient";
+          const when = whenText(recipient.lastOpenAt || recipient.firstOpenAt) || new Date().toLocaleString();
+          const subject = message.subject || "(No subject)";
+          try {
+            await GOT_SETTINGS.sendEmailAlert(settings, {
+              to_name: "there", from_name: "Gmail Open Tracker",
+              title: clicked ? "Link clicked" : "Email likely opened",
+              subject, recipient: who, status: clicked ? "Clicked a link" : "Likely opened",
+              confidence: String(recipient.score), opened_at: when,
+              message: `${who} ${clicked ? "clicked a link in" : "likely opened"} "${subject}" at ${when}. Confidence ${recipient.score}/100. This is an estimate, not proof.`
+            });
+          } catch (_) { /* email is best effort; the desktop alert below still fires */ }
+        }
+        if (settings.notifyOpens !== false && chrome.notifications?.create) {
+          const who = String(recipient.address || "").split(",")[0].trim() || "A recipient";
+          const when = whenText(recipient.lastOpenAt || recipient.firstOpenAt);
           await chrome.notifications.create(`got-${id}-${rank}`, {
             type: "basic",
             iconUrl: "icon.png",
             title: rank === RANK.ENGAGED ? "Link clicked" : "Email likely opened",
-            message: `${message.subject || "(No subject)"} — ${recipient.address}`,
-            contextMessage: `Confidence ${recipient.score}/100. An estimate, not proof.`
+            message: `${who} · ${message.subject || "(No subject)"}`,
+            contextMessage: `${when ? when + " · " : ""}Confidence ${recipient.score}/100`
           });
         }
       }
     }
-    await chrome.storage.local.set({ [RANKS_KEY]: next }); // first run only sets the baseline
+    await chrome.storage.local.set({ [RANKS_KEY]: next, [UNSEEN_KEY]: unseen }); // first run only sets the baseline
+    await setBadge(unseen);
   } catch (_) {
     // Backend may be offline. Saved state is not advanced on failure.
   }
 }
+
+chrome.notifications?.onClicked?.addListener((id) => {
+  if (!String(id).startsWith("got-")) return;
+  chrome.tabs.create({ url: "https://mail.google.com/" });
+  chrome.notifications.clear(id);
+});
 
 function schedulePolling() { chrome.alarms.create(POLL_ALARM, { periodInMinutes: 1 }); }
 chrome.runtime.onInstalled.addListener(() => { schedulePolling(); checkForNewActivity(); });

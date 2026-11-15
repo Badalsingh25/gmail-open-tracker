@@ -1,4 +1,5 @@
 (() => {
+  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // Gmail's JSON send endpoint is not meant for big uploads
   const CHECKBOX_CLASS = "got-track-toggle";
   const installed = new WeakSet();
   const ask = (message) => chrome.runtime.sendMessage(message);
@@ -51,14 +52,31 @@
     async function separateEligibility(body, subject) {
       const status = await ask({ type: "GMAIL_STATUS" });
       if (!status?.configured) return { ok: false, reason: "can't be split because Google sign-in isn't set up (see README)" };
-      if (compose.querySelector('[aria-label^="Remove attachment"], [data-tooltip^="Remove attachment"], .aZo, .dL, [download_url]')) {
-        return { ok: false, reason: "has attachments, which can't be split into separate copies" };
+      let attachments = [];
+      const attachmentBoxes = [...compose.querySelectorAll('[aria-label^="Remove attachment"], [data-tooltip^="Remove attachment"], .aZo, .dL')];
+      if (attachmentBoxes.length) {
+        const urls = [...new Set([...compose.querySelectorAll("[download_url]")].map(n => n.getAttribute("download_url")))];
+        const parsed = urls.length ? GOT.parseAttachmentUrls(urls) : null;
+        if (!parsed) return { ok: false, reason: "has an attachment that can't be read yet (still uploading, or a Drive link), so it can't be split into separate copies" };
+        try {
+          let total = 0;
+          for (const a of parsed) {
+            const response = await fetch(a.url, { credentials: "include" });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            total += bytes.length;
+            if (total > MAX_ATTACHMENT_BYTES) return { ok: false, reason: `has attachments over ${Math.round(MAX_ATTACHMENT_BYTES / 1048576)} MB in total, which is too large to split into separate copies` };
+            attachments.push({ name: a.name, mime: a.mime, data: GOT.toBase64(bytes) });
+          }
+        } catch (error) {
+          return { ok: false, reason: `has an attachment that couldn't be read (${error.message}), so it can't be split into separate copies` };
+        }
       }
       if (body.querySelector(`img:not([${GOT.PIXEL_ATTR}])`)) return { ok: false, reason: "contains inline images, which can't be split into separate copies" };
       if (body.querySelector(".gmail_quote") || /^\s*(re|fwd?|fw)\s*:/i.test(subject)) {
         return { ok: false, reason: "is a reply or forward, which would lose its conversation thread" };
       }
-      return { ok: true };
+      return { ok: true, attachments };
     }
 
     async function prepareAndSend() {
@@ -78,12 +96,14 @@
         const links = settings.trackLinks ? GOT.collectLinks(body) : [];
 
         let separate = false;
+        let attachments = [];
         let note = "";
         if (recipients.length > 1 && settings.sendMode !== "shared") {
           const eligibility = await separateEligibility(body, subject);
           if (!eligibility.ok) note = `One shared copy will be sent: this message ${eligibility.reason}.`;
-          else if (settings.sendMode === "separate") separate = true;
+          else if (settings.sendMode === "separate") { separate = true; attachments = eligibility.attachments; }
           else {
+            attachments = eligibility.attachments;
             separate = window.confirm(
               `${recipients.length} recipients.\n\nOK: send ${recipients.length} separate tracked copies, so you can see who opened (they won't see each other).\n` +
               `Cancel: send one shared copy (opens can't be attributed to a person).`);
@@ -101,7 +121,7 @@
         rememberSenderTokens(refs);
 
         if (separate) {
-          await sendSeparately(body, subject, refs);
+          await sendSeparately(body, subject, refs, attachments);
           return;
         }
 
@@ -122,7 +142,7 @@
       }
     }
 
-    async function sendSeparately(body, subject, refs) {
+    async function sendSeparately(body, subject, refs, attachments) {
       const alreadySent = new Set(JSON.parse(compose.dataset.gotSent || "[]"));
       const originalHtml = body.innerHTML; // never modified: each copy is rendered from this
       const plain = body.innerText || "";
@@ -130,7 +150,7 @@
         .map(r => ({ to: r.address, subject, html: GOT.renderCopy(originalHtml, r), text: plain }));
 
       text.textContent = `Sending ${items.length} separate copies…`;
-      const outcome = await ask({ type: "SEND_SEPARATE", items });
+      const outcome = await ask({ type: "SEND_SEPARATE", items, attachments });
       if (!outcome?.ok) throw new Error(outcome?.error || "Could not send the copies");
 
       for (const r of outcome.results) if (r.ok) alreadySent.add(r.to);
@@ -218,6 +238,10 @@
     }
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
   guardOwnViews(document.documentElement);
+  // The script now starts before Gmail has set the tab title, so check again once the page (and its title) exist.
+  for (const evt of ["DOMContentLoaded", "load"]) {
+    try { document.addEventListener?.(evt, () => guardOwnViews(document.documentElement)); window.addEventListener?.(evt, () => guardOwnViews(document.documentElement)); } catch (_) { /* tearing down */ }
+  }
 
   const scan = () => typeof document !== "undefined" && document.querySelectorAll('[role="dialog"], .M9').forEach(addToggle);
   new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });

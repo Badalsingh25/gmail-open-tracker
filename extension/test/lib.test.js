@@ -105,3 +105,24 @@ test("accountFromTitle and tokenFromPixelUrl", () => {
   assert.equal(GOT.tokenFromPixelUrl(`https://track.example.com/t/${tok}.gif`), tok);
   assert.equal(GOT.tokenFromPixelUrl("https://t.example/t/R0.gif"), null);
 });
+
+test("buildMime adds attachments as multipart/mixed around the text/html alternative", () => {
+  const data = Buffer.from("hello résumé").toString("base64");
+  const mime = GOT.buildMime({ to: "a@example.com", subject: "S", html: "<p>x</p>", text: "x",
+    attachments: [{ name: "Résumé.pdf", mime: "application/pdf", data }] });
+  assert.match(mime, /Content-Type: multipart\/mixed; boundary="got_mixed_/);
+  assert.match(mime, /Content-Type: multipart\/alternative/);
+  assert.match(mime, /Content-Type: application\/pdf; name="attachment"/);
+  assert.match(mime, /filename\*=UTF-8''R%C3%A9sum%C3%A9\.pdf/);
+  assert.ok(mime.includes(data));
+  const outer = /multipart\/mixed; boundary="([^"]+)"/.exec(mime)[1];
+  assert.ok(mime.trimEnd().endsWith(`--${outer}--`));
+  assert.doesNotMatch(GOT.buildMime({ to: "a@example.com", subject: "S", html: "h", text: "t" }), /multipart\/mixed/);
+});
+
+test("parseAttachmentUrls reads Gmail's download_url format and rejects anything else", () => {
+  const ok = GOT.parseAttachmentUrls(["application/pdf:cv.pdf:https://mail.google.com/mail/?ui=2&ik=1&attid=0.1"]);
+  assert.equal(JSON.stringify(ok), JSON.stringify([{ mime: "application/pdf", name: "cv.pdf", url: "https://mail.google.com/mail/?ui=2&ik=1&attid=0.1" }]));
+  assert.equal(GOT.parseAttachmentUrls(["application/pdf:cv.pdf:https://evil.example/x"]), null);
+  assert.equal(GOT.parseAttachmentUrls([""]), null);
+});

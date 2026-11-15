@@ -10,9 +10,15 @@ function normalisedApi() {
   return { raw, origin: url.origin, local };
 }
 
+function emailFields() {
+  return { emailAlerts: $("emailAlerts").checked, alertEmail: $("alertEmail").value.trim(), emailjsServiceId: $("ejsService").value.trim(),
+    emailjsTemplateId: $("ejsTemplate").value.trim(), emailjsPublicKey: $("ejsKey").value.trim() };
+}
+
 async function load() {
   const s = await GOT_SETTINGS.getSettings();
-  $("api").value = s.apiBaseUrl; $("key").value = s.apiKey; $("mode").value = s.sendMode; $("links").checked = !!s.trackLinks;
+  $("api").value = s.apiBaseUrl; $("key").value = s.apiKey; $("mode").value = s.sendMode; $("links").checked = !!s.trackLinks; $("notify").checked = s.notifyOpens !== false;
+  $("emailAlerts").checked = s.emailAlerts !== false; $("alertEmail").value = s.alertEmail || ""; $("ejsService").value = s.emailjsServiceId || ""; $("ejsTemplate").value = s.emailjsTemplateId || ""; $("ejsKey").value = s.emailjsPublicKey || "";
 }
 
 $("save").addEventListener("click", async () => {
@@ -23,7 +29,7 @@ $("save").addEventListener("click", async () => {
     const granted = await chrome.permissions.request({ origins: [target.origin + "/*"] });
     if (!granted) return status("Permission to contact that server was not granted.", false);
   }
-  await GOT_SETTINGS.saveSettings({ apiBaseUrl: target.raw, apiKey: $("key").value, sendMode: $("mode").value, trackLinks: $("links").checked });
+  await GOT_SETTINGS.saveSettings({ apiBaseUrl: target.raw, apiKey: $("key").value, sendMode: $("mode").value, trackLinks: $("links").checked, notifyOpens: $("notify").checked, ...emailFields() });
   status("Saved.", true);
 });
 
@@ -40,6 +46,19 @@ $("test").addEventListener("click", async () => {
   } catch (e) {
     status("Could not reach the server: " + e.message + "\nIf it is a new address, press Save first to grant access.", false);
   }
+});
+
+$("testEmail").addEventListener("click", async () => {
+  status("Sending test email…");
+  try {
+    const settings = { ...(await GOT_SETTINGS.getSettings()), ...emailFields() };
+    await GOT_SETTINGS.sendEmailAlert(settings, {
+      to_name: "there", from_name: "Gmail Open Tracker", title: "Test alert", subject: "Test email", recipient: "test@example.com",
+      status: "Likely opened", confidence: "90", opened_at: new Date().toLocaleString(),
+      message: "This is a test alert from Gmail Open Tracker. If you can read this, email alerts work."
+    });
+    status("Test email sent. Check the inbox (and spam) of the address your EmailJS template sends to.", true);
+  } catch (e) { status("Could not send: " + e.message, false); }
 });
 
 load();
