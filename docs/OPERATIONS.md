@@ -6,7 +6,7 @@ nothing in it changes how the tracker behaves.
 ## 1. What already protects the public endpoints
 
 - **Rate limit per source address** on `/t/<token>.gif` and `/l/<token>/<id>`: a burst of 120 requests, refilling at
-  20 per second (`TRACKER_RATE_LIMIT_BURST`, `TRACKER_RATE_LIMIT_PER_SECOND`). A request over the limit still gets
+  20 per second (`TRACKER_RATE_BURST`, `TRACKER_RATE_PER_SECOND`). A request over the limit still gets
   the image or the redirect, so the recipient sees nothing wrong, but it is not recorded.
 - **Signed tokens.** A bad or forged token never touches the database and never breaks the page.
 - **API key** on every dashboard endpoint. Use a long random value, never the development default.
